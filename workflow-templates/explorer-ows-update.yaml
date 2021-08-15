@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: explorer-ows-update
+  namespace: processing
+spec:
+  entrypoint: update
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  workflowMetadata:
+    labels:
+      app: update-explorer-ows-workflowmetadata
+  arguments:
+    parameters:
+      - name: products
+        value: --all
+  templates:
+    - name: update
+      metadata:
+        labels:
+          app: argo-explorer-ows-update
+      inputs:
+        parameters:
+          - name: products
+            value: "{{workflow.parameters.products}}"
+      steps:
+        - - name: update-explorer
+            templateRef:
+              name: explorer-update
+              template: explorer-update
+            arguments:
+              parameters:
+                - name: products
+                  value: "{{inputs.parameters.products}}"
+          - name: update-ows
+            templateRef:
+              name: ows-update
+              template: ows-update
+            arguments:
+              parameters:
+                - name: products
+                  value: "{{inputs.parameters.products}}"

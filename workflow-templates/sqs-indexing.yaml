@@ -1,0 +1,72 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: sqs-indexing
+  namespace: processing
+spec:
+  entrypoint: sqs-indexing
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  workflowMetadata:
+    labels:
+      app: indexing-sqs-workflowmetadatalabel
+  arguments:
+    parameters:
+      - name: queue
+        value: example-queue-name
+      - name: products
+        value: example_product
+  templates:
+    - name: sqs-indexing
+      metadata:
+        labels:
+          app: argo-sqs-index
+      inputs:
+        parameters:
+          - name: queue
+            value: "{{workflow.parameters.queue}}"
+          - name: products
+            value: "{{workflow.parameters.products}}"
+      container:
+        command:
+          - sqs-to-dc
+        args:
+          - "{{inputs.parameters.queue}}"
+          - --stac
+          - --update-if-exists
+          - --allow-unsafe
+          - "{{inputs.parameters.products}}"
+        env:
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: postgres-username
+                name: odc-writer
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: postgres-password
+                name: odc-writer
+          - name: DB_DATABASE
+            value: odc
+          - name: DB_HOSTNAME
+            value: db-writer
+          - name: AWS_DEFAULT_REGION
+            valueFrom:
+              secretKeyRef:
+                key: AWS_DEFAULT_REGION
+                name: indexing-user-creds-dev
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                key: AWS_ACCESS_KEY_ID
+                name: indexing-user-creds-dev
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                key: AWS_SECRET_ACCESS_KEY
+                name: indexing-user-creds-dev
+        image: opendatacube/datacube-index:latest
+        name: indexing-container

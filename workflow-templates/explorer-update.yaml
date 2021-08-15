@@ -1,0 +1,52 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: explorer-update
+  namespace: processing
+spec:
+  entrypoint: exploere-update
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  workflowMetadata:
+    labels:
+      app: update-explorer-workflowmetadatalabel
+  arguments:
+    parameters:
+      - name: products
+        value: --all
+  templates:
+    - name: explorer-update
+      metadata:
+        labels:
+          app: argo-explorer-update
+      inputs:
+        parameters:
+          - name: products
+            value: "{{workflow.parameters.products}}"
+      container:
+        command:
+          - bash
+        args:
+          - '-c'
+          - >-
+            cubedash-gen --no-init-database --refresh-stats
+            {{inputs.parameters.products}}
+        env:
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: postgres-username
+                name: explorer-writer
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: postgres-password
+                name: explorer-writer
+          - name: DB_DATABASE
+            value: odc
+          - name: DB_HOSTNAME
+            value: db-writer
+        image: opendatacube/explorer:latest
+        name: indexing-container

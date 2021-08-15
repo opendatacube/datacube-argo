@@ -1,0 +1,115 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: stats-processing
+  namespace: processing
+spec:
+  entrypoint: stats-processing
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  workflowMetadata:
+    labels:
+      app: stats-processing-workflowmetadatalabel
+  arguments:
+    parameters:
+      - name: image-tag
+        value: "datacube-statistician image tag"
+      - name: queue
+        value: "queue name"
+      - name: db-s3-path
+        value: "cache db s3 path"
+      - name: result-bucket
+        value: "result s3 bucket"
+      - name: resolution
+        value: "resolution"
+      - name: threads
+        value: "threads"
+      - name: cpu-limit
+        value: "cpu-limit"
+      - name: mem-limit
+        value: "mem-limit"
+      - name: k8s-user-secret
+        value: "processing user secret name"
+      - name: product-cfg
+        value: "product config"
+  templates:
+    - name: stats-processing
+      metadata:
+        labels:
+          app: argo-stats-processing
+      inputs:
+        parameters:
+          - name: image-tag
+            value: "{{workflow.parameters.image-tag}}"
+          - name: sqs
+            value: "{{workflow.parameters.queue}}"
+          - name: db-s3-path
+            value: "{{workflow.parameters.db-s3-path}}"
+          - name: result-bucket
+            value: "{{workflow.parameters.result-bucket}}"
+          - name: resolution
+            value: "{{workflow.parameters.resolution}}"
+          - name: threads
+            value: "{{workflow.parameters.threads}}"
+          - name: cpu-limit
+            value: "{{workflow.parameters.cpu-limit}}"
+          - name: mem-limit
+            value: "{{workflow.parameters.mem-limit}}"
+          - name: k8s-user-secret
+            value: "{{workflow.parameters.k8s-user-secret}}"
+          - name: cfg
+            value: "{{workflow.parameters.product-cfg}}"
+      podSpecPatch: '{"containers":[{"name":"main", "resources":{"requests":{"cpu": "{{inputs.parameters.cpu-limit}}", "memory": "{{inputs.parameters.mem-limit}}"}, "limits":{"cpu": "{{inputs.parameters.cpu-limit}}", "memory": "{{inputs.parameters.mem-limit}}" }}}]}'
+      container:
+        image: 543785577597.dkr.ecr.af-south-1.amazonaws.com/opendatacube/datacube-statistician:{{inputs.parameters.image-tag}}
+        name: stats
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          # Liveness probe fails if heartbeat is more than 10 seconds old for two consecutive checks.
+          initialDelaySeconds: 15
+          failureThreshold: 2
+          periodSeconds: 5
+          exec:
+            command:
+              - "/bin/bash"
+              - "-c"
+              - |
+                last_heartbeat=$(date --date $(cat $HEARTBEAT_FILEPATH) +%s)
+                t_now=$(date +%s)
+                t_diff=$(($t_now - $last_heartbeat))
+                [ $t_diff -gt 10 ] && exit 1 || echo HEALTHY
+        command: ["/bin/bash"]
+        args:
+          - '-c'
+          - |
+            exec odc-stats run \
+              "{{inputs.parameters.db-s3-path}}" \
+              --config="{{inputs.parameters.cfg}}" \
+              --from-sqs="{{inputs.parameters.sqs}}" \
+              --resolution="{{inputs.parameters.resolution}}" \
+              --threads="{{inputs.parameters.threads}}" \
+              --memory-limit="{{inputs.parameters.mem-limit}}" \
+              --location="s3://{{inputs.parameters.result-bucket}}/{product}/{version}" \
+              --heartbeat-filepath="${HEARTBEAT_FILEPATH}"
+        env:
+          - name: HEARTBEAT_FILEPATH
+            value: /tmp/stats-heartbeat.txt
+          - name: AWS_S3_ENDPOINT
+            value: s3.af-south-1.amazonaws.com
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: "{{inputs.parameters.k8s-user-secret}}"
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: "{{inputs.parameters.k8s-user-secret}}"
+                key: AWS_SECRET_ACCESS_KEY
+          - name: AWS_DEFAULT_REGION
+            valueFrom:
+              secretKeyRef:
+                name: "{{inputs.parameters.k8s-user-secret}}"
+                key: AWS_DEFAULT_REGION

@@ -1,0 +1,88 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ows-update
+  namespace: processing
+spec:
+  entrypoint: ows-update
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  workflowMetadata:
+    labels:
+      app: update-ows-workflowmetadatalabel
+  arguments:
+    parameters:
+      - name: products
+        value: --all
+  templates:
+    - name: ows-update
+      steps:
+        - - name: generate-config
+            template: get-ows-config
+        - - name: do-update
+            template: do-ows-update
+            arguments:
+              artifacts:
+              - name: deafrica-config
+                from: "{{steps.generate-config.outputs.artifacts.config-out}}"
+
+    - name: get-ows-config
+      outputs:
+        artifacts:
+          - name: config-out
+            path: /opt/dea-config/services/ows_refactored
+      container:
+        image: geoscienceaustralia/deafrica-config:latest
+
+    - name: do-ows-update
+      metadata:
+        labels:
+          app: argo-ows-update
+      dependencies: [get-ows-config]
+      inputs:
+        parameters:
+          - name: products
+            value: "{{workflow.parameters.products}}"
+        artifacts:
+          - name: deafrica-config
+            path: /env/config/ows_refactored
+      container:
+        image: opendatacube/ows:latest
+        command: [bash, -c]
+        args:
+          - |
+            echo "Updating ows views"
+            datacube-ows-update --views
+            echo "Updating ows system"
+            for product in "{{inputs.parameters.products}}"; do
+                if [ $product == "--all" ]; then
+                    echo "Updating all"
+                    datacube-ows-update
+                else
+                    echo "Updating $product"
+                    datacube-ows-update $product
+                fi
+            done || exit 1;
+        env:
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: postgres-username
+                name: ows-writer
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: postgres-password
+                name: ows-writer
+          - name: DB_DATABASE
+            value: odc
+          - name: DB_HOSTNAME
+            value: db-writer
+          - name: WMS_CONFIG_PATH
+            value: "/env/config/ows_refactored/dev_af_ows_root_cfg.py"
+          - name: DATACUBE_OWS_CFG
+            value: "ows_refactored.dev_af_ows_root_cfg.ows_cfg"
+          - name: PYTHONPATH
+            value: "/env/config"

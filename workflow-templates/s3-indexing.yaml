@@ -1,0 +1,54 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: update-products
+  namespace: processing
+spec:
+  entrypoint: update-products
+  podGC:
+    strategy: OnPodSuccess
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  workflowMetadata:
+    labels:
+      app: dc-update-products-workflowmetadata
+  arguments:
+    parameters:
+      - name: csv_path
+        value: "https://raw.githubusercontent.com/digitalearthafrica/config/master/dev/products_dev.csv"
+      - name: arguments
+        value: "--update-if-exists"
+  templates:
+    - name: update-products
+      metadata:
+        labels:
+          app: argo-dc-sync-products
+      inputs:
+        parameters:
+          - name: csv_path
+            value: "{{workflow.parameters.csv_path}}"
+          - name: arguments
+            value: "{{workflow.parameters.arguments}}"
+      container:
+        name: indexing-container
+        image: opendatacube/datacube-index:latest
+        command: ["bash", "-c"]
+        args:
+          - >-
+            dc-sync-products {{inputs.parameters.csv_path}}
+            {{inputs.parameters.arguments}}
+        env:
+          - name: DB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key: postgres-username
+                name: odc-admin
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: postgres-password
+                name: odc-admin
+          - name: DB_DATABASE
+            value: odc
+          - name: DB_HOSTNAME
+            value: db-writer
